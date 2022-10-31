@@ -20,8 +20,9 @@ def get_assignments(prefs, students_names, events_names):
     student_nodes = list(range(node_count, students + node_count))
     node_count += len(student_nodes)
     for i in range(len(student_nodes)):
-        for i in range(student_max_events):
-            smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], 1, 3**i)
+        smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], student_max_events, 10)
+        # for i in range(student_max_events):
+        #     smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], 1, 3**i)
 
     # add edges from student nodes to event nodes
     event_nodes = list(range(node_count, events + node_count))
@@ -187,18 +188,21 @@ def main():
     best_loss = 9223372036854775807
     best_assignments = []
     i = 0
-    for comb in itertools.combinations(toAssign, 8):
-        teamA += list(comb)
-        teamB += [i for i in toAssign if i not in list(comb)]
-        assignments, loss = get_assignments([prefs[i] for i in teamA], [students_names[i] for i in teamA], events_names)
-        assignments2, loss2 = get_assignments([prefs[i] for i in teamB], [students_names[i] for i in teamB], events_names)
+    for comb in list(itertools.combinations(toAssign, 8)):
+        a = teamA + list(comb)
+        b = teamB + [i for i in toAssign if i not in list(comb)]
+        print(a)
+        print(b)
+        assignments, loss = get_assignments([prefs[i] for i in a], [students_names[i] for i in a], events_names)
+        assignments2, loss2 = get_assignments([prefs[i] for i in b], [students_names[i] for i in b], events_names)
         if best_loss > loss + loss2:
             best_assignments = [assignments, assignments2]
             best_loss = loss + loss2
         print(i)
         i += 1
     for assi in best_assignments:
-        print("Team:")
+        print(best_loss)
+        print("\n\nTeam {i}:")
         for row in assi:
             print(row)
 
