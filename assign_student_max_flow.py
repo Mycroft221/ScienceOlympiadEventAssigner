@@ -1,12 +1,17 @@
+import random
+
 from ortools.graph.python import min_cost_flow
 import numpy as np
 import math
 import itertools
 
-def get_assignments(prefs, students_names, events_names):
-    students_per_event = 2
-    student_max_events = 3
+students_per_event = 2
+student_max_events = 4
+two_exp = True
+multiple_event_penalty = 100
+prefs_multiplier = 100
 
+def get_assignments(prefs, students_names, events_names, events_groups):
     students = len(prefs)
     events = len(prefs[0])
 
@@ -16,20 +21,55 @@ def get_assignments(prefs, students_names, events_names):
     source_node = 0
     node_count = 1
 
-    # add edges from source node to a node representing each student
+    # add edges from source node to a node representing each student, with first/second/third slot nodes in between to penalize assigning multiple events to any one student
     student_nodes = list(range(node_count, students + node_count))
     node_count += len(student_nodes)
+    slot_nodes = []
+    slot_nodes_by_student = {}
     for i in range(len(student_nodes)):
-        smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], student_max_events, 10)
-        # for i in range(student_max_events):
-        #     smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], 1, 3**i)
+        # smcf.add_arc_with_capacity_and_unit_cost(0, student_nodes[i], student_max_events, 0)
+        slot_nodes_for_student = list(range(node_count, student_max_events + node_count))
+        node_count += student_max_events
+        slot_nodes += slot_nodes_for_student
+        slot_nodes_by_student[i] = slot_nodes_for_student
+        for j in range(student_max_events):
+            smcf.add_arc_with_capacity_and_unit_cost(0, slot_nodes_for_student[j], 1, 3 ** j * multiple_event_penalty)
+            smcf.add_arc_with_capacity_and_unit_cost(slot_nodes_for_student[j], student_nodes[i], 1, 0)
 
-    # add edges from student nodes to event nodes
+    # add edges from each student node to a set of concurrent event groups
+    concurrent_event_groups_by_student_node = {}
+    concurrent_event_group_to_student_node = {}
+    for student_node in student_nodes:
+        concurrent_event_groups_for_student = list(range(node_count, len(events_groups) + node_count))
+        node_count += len(events_groups)
+        concurrent_event_groups_by_student_node[student_node] = concurrent_event_groups_for_student
+        for group in concurrent_event_groups_for_student:
+            smcf.add_arc_with_capacity_and_unit_cost(student_node, group, 1, 0)
+            concurrent_event_group_to_student_node[group] = student_node
+
+    # add edges from each student's set of concurrent event groups to every event, with corresponding pref cost
     event_nodes = list(range(node_count, events + node_count))
     node_count += len(event_nodes)
-    for i, student_pref_row in enumerate(prefs):
-        for j, event_pref in enumerate(student_pref_row):
-            smcf.add_arc_with_capacity_and_unit_cost(student_nodes[i], event_nodes[j], 1, event_pref)
+    event_name_by_node = {}
+    event_node_by_name = {}
+    event_idx_by_name = {}
+    for i, event_node in enumerate(event_nodes):
+        event_name_by_node[event_node] = events_names[i % len(events_names)]
+        event_node_by_name[events_names[i % len(events_names)]] = event_node
+        event_idx_by_name[events_names[i % len(events_names)]] = i
+    for student_idx, student_node in enumerate(student_nodes):
+        for group_idx, group_node in enumerate(concurrent_event_groups_by_student_node[student_node]):
+            for event in events_groups[group_idx]:
+                event_node = event_node_by_name[event]
+                cost = prefs[student_idx][event_idx_by_name[event]]
+                smcf.add_arc_with_capacity_and_unit_cost(group_node, event_node, 1, cost)
+
+    # # add edges from student nodes to event nodes
+    # event_nodes = list(range(node_count, events + node_count))
+    # node_count += len(event_nodes)
+    # for i, student_pref_row in enumerate(prefs):
+    #     for j, event_pref in enumerate(student_pref_row):
+    #         smcf.add_arc_with_capacity_and_unit_cost(student_nodes[i], event_nodes[j], 1, event_pref)
 
     # add edges from each event node to the sink node
     sink_node = node_count
@@ -48,28 +88,31 @@ def get_assignments(prefs, students_names, events_names):
     for i, slot in enumerate(student_nodes):
         student_name_by_node[slot] = students_names[i]
 
-    event_name_by_node = {}
-    for i, event_node in enumerate(event_nodes):
-        event_name_by_node[event_node] = events_names[i % len(events_names)]
-
     assignments = []
     if status == smcf.OPTIMAL:
         print('Total cost = ', smcf.optimal_cost())
         print()
         for arc in range(smcf.num_arcs()):
-            # Can ignore arcs leading out of source or into sink.
-            if smcf.tail(arc) != source_node and smcf.head(arc) != sink_node:
-
-                # Arcs in the solution have a flow value of 1. Their start and end nodes
-                # give an assignment of worker to task.
-                if smcf.flow(arc) > 0:
-                    student = student_name_by_node[smcf.tail(arc)]
+            # Can ignore arcs leading out of source or into sink. Also between student nodes and concurrent event group nodes
+            if smcf.tail(arc) != source_node and smcf.head(arc) != sink_node and smcf.tail(arc) not in student_nodes and smcf.head(arc) not in student_nodes:
+                if smcf.flow(arc) == 1:
+                    student = student_name_by_node[concurrent_event_group_to_student_node[smcf.tail(arc)]]
                     event = event_name_by_node[smcf.head(arc)]
-                    cost = int(math.log(smcf.unit_cost(arc), 2))
+                    cost = int(math.log(smcf.unit_cost(arc) / prefs_multiplier, 2))
                     # print(f'{student:<25} assigned to event {event:30}.' +
                     #       f' Cost: {cost}')
                     assignments.append(f'{student:<25} assigned to event {event:30}.' +
                           f' Cost: {cost}')
+                elif smcf.flow(arc) > 1:
+                    print("ERROR STATE")
+                    # student = student_name_by_node[concurrent_event_group_to_student_node[smcf.tail(arc)]]
+                    # event = event_name_by_node[smcf.head(arc)]
+                    # cost = int(math.log(smcf.unit_cost(arc), 2))
+                    # print(f'{student:<25} assigned to event {event:30}.' +
+                    #       f' Cost: {cost}')
+                    # assignments.append(f'{student:<25} assigned to event {event:30}.' +
+                    #       f' Cost: {cost}')
+                    # print("FLOW: ", smcf.flow(arc))
     else:
         print(f'Status: {status}')
     return assignments, smcf.optimal_cost()
@@ -170,6 +213,19 @@ def main():
                     "Roller Coaster",
                     "Wheeled Vehicle"]
 
+    events_groups = [
+        ["Road Scholar", "Disease Detectives", "Codebusters"] + ["Anatomy and Physiology", "Solar System", "Sounds of Music"],
+        ["Experimental Design", "Forestry", "Crave The Wave"],
+        ["Can't Judge a Powder", "Dynamic Planet", "Fast Facts"],
+        ["Bio Process Lab", "Crime Busters", "Rocks and Minerals"],
+        ["Green Generation", "Meteorology", "Write It Do It"],
+        ["Storm the Castle"],
+        ["Bridge"],
+        ["Flight"],
+        ["Roller Coaster"],
+        ["Wheeled Vehicle"]
+    ]
+
     # preference validation
     for i, row in enumerate(prefs):
         for j in range(1, 23):
@@ -180,7 +236,8 @@ def main():
                 while prefs[i].count(j) > 1:
                     prefs[i][row.index(j)] = j + 1
 
-    prefs = np.exp2(prefs).astype(np.uint).tolist()
+    if two_exp:
+        prefs = (np.exp2(prefs).astype(np.uint) * prefs_multiplier).tolist()
 
     teamA = list(range(25, 34))
     teamB = list(range(14, 25))
@@ -188,21 +245,22 @@ def main():
     best_loss = 9223372036854775807
     best_assignments = []
     i = 0
+    # for comb in random.sample(list(itertools.combinations(toAssign, 8)), 1):
     for comb in list(itertools.combinations(toAssign, 8)):
         a = teamA + list(comb)
         b = teamB + [i for i in toAssign if i not in list(comb)]
         print(a)
         print(b)
-        assignments, loss = get_assignments([prefs[i] for i in a], [students_names[i] for i in a], events_names)
-        assignments2, loss2 = get_assignments([prefs[i] for i in b], [students_names[i] for i in b], events_names)
+        assignments, loss = get_assignments([prefs[i] for i in a], [students_names[i] for i in a], events_names, events_groups)
+        assignments2, loss2 = get_assignments([prefs[i] for i in b], [students_names[i] for i in b], events_names, events_groups)
         if best_loss > loss + loss2:
             best_assignments = [assignments, assignments2]
             best_loss = loss + loss2
         print(i)
         i += 1
-    for assi in best_assignments:
+    for i, assi in enumerate(best_assignments):
         print(best_loss)
-        print("\n\nTeam {i}:")
+        print(f"\n\nTeam {i}:")
         for row in assi:
             print(row)
 
