@@ -7,9 +7,9 @@ import itertools
 
 students_per_event = 2
 student_max_events = 4
-two_exp = True
-multiple_event_penalty = 100
-prefs_multiplier = 100
+two_exp = False
+multiple_event_penalty = 1
+prefs_multiplier = 1
 
 def get_assignments(prefs, students_names, events_names, events_groups):
     students = len(prefs)
@@ -98,7 +98,7 @@ def get_assignments(prefs, students_names, events_names, events_groups):
                 if smcf.flow(arc) == 1:
                     student = student_name_by_node[concurrent_event_group_to_student_node[smcf.tail(arc)]]
                     event = event_name_by_node[smcf.head(arc)]
-                    cost = int(math.log(smcf.unit_cost(arc) / prefs_multiplier, 2))
+                    cost = int(math.log(smcf.unit_cost(arc) / prefs_multiplier, 2)) if two_exp else int(smcf.unit_cost(arc) / prefs_multiplier)
                     # print(f'{student:<25} assigned to event {event:30}.' +
                     #       f' Cost: {cost}')
                     assignments.append(f'{student:<25} assigned to event {event:30}.' +
